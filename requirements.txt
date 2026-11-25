@@ -1,0 +1,4 @@
+# Application package: src/lxd_container_backup/
+# Python runtime: 3.9 or newer (install with your operating system).
+# Python packages: none; the script uses only the standard library.
+# System dependency: rsync (install with your operating system, not pip).
