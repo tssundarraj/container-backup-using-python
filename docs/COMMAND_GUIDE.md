@@ -25,13 +25,12 @@ In plain language, the command works like this:
 2. The command calls `main()` in `src/lxd_container_backup/cli.py`.
 3. The CLI initializes file logging at `/var/log/backup.log`.
 4. The CLI reads `--config` to find the settings file.
-5. `config.py` reads and validates the three required settings:
-   `CONTAINER_NAME`, `LXD_CONTAINERS_PATH`, and `BACKUP_ROOT`.
-6. `backup.py` checks the container name, source directory, `rsync`
-   availability, and destination location.
-7. It creates a timestamped destination and runs `rsync`.
-8. It prints success or failure information, appends the outcome to the log,
-   and returns an exit status to the terminal.
+5. `config.py` reads the workspace names and the required paths.
+6. `workspace_backup.py` visits each configured workspace in order.
+7. For each one, `backup.py` checks its name and source directory, creates a
+   timestamped destination, and runs `rsync`.
+8. The program logs each result, continues after an individual failure, and
+   returns a non-zero status if any workspace failed.
 
 The copy is a filesystem copy. The source may change while a running
 container is being copied, so a successful command does not guarantee an
@@ -84,14 +83,22 @@ nano config/backup.env
 Check that the values match the machine where the command will run:
 
 ```dotenv
-CONTAINER_NAME=admin---demo-workspaces
+CONTAINER_NAMES=admin---demo-workspaces
 LXD_CONTAINERS_PATH=/var/snap/lxd/common/lxd/storage-pools/local/containers
 BACKUP_ROOT=/root/sundar/lxd-container-backup
 ```
 
-Use plain `KEY=VALUE` lines without quotes. `LXD_CONTAINERS_PATH` is the
-parent of the container directory; the program appends `CONTAINER_NAME` to
-it. For these example values, the source directory must be:
+Use plain `KEY=VALUE` lines without quotes. Add more workspace directory
+names by separating them with commas:
+
+```dotenv
+CONTAINER_NAMES=admin---demo-workspaces,admin---team-workspace
+```
+
+Spaces around names are ignored. Existing config files using the singular
+`CONTAINER_NAME=name` continue to work; do not set both keys. The program
+appends each name to `LXD_CONTAINERS_PATH`, which is the parent folder. For
+the first example value, the source directory must be:
 
 ```text
 /var/snap/lxd/common/lxd/storage-pools/local/containers/admin---demo-workspaces
@@ -149,10 +156,10 @@ executable explicitly:
 sudo "$PWD/.venv/bin/lxd-container-backup" --config "$PWD/config/backup.env"
 ```
 
-Each run creates a new directory under:
+Each workspace gets a new directory under:
 
 ```text
-BACKUP_ROOT/CONTAINER_NAME/YYYYMMDD_HHMMSS_microseconds/
+BACKUP_ROOT/WORKSPACE_NAME/YYYYMMDD_HHMMSS_microseconds/
 ```
 
 For the example config, a destination might look like:
@@ -162,7 +169,9 @@ For the example config, a destination might look like:
 ```
 
 It does not overwrite previous timestamped backup directories. Check the
-printed destination and confirm it contains the expected files.
+printed destination and confirm it contains the expected files. If one
+workspace fails, the command continues with the remaining names and returns
+a non-zero exit status after the batch.
 
 View the latest log entries with:
 
@@ -198,8 +207,8 @@ options are:
 - `--help`: show usage and exit.
 - `--config PATH`: use the specified settings file.
 
-The container name is configured in `config/backup.env`; it is not currently
-a command-line option.
+Workspace names are configured in `config/backup.env`; they are not currently
+command-line options.
 
 ## Errors and exit status
 
@@ -207,9 +216,13 @@ a command-line option.
   the package with `python -m pip install -e .` while that environment is
   active.
 - **Config not found or invalid:** confirm the path after `--config` and
-  check that all three required settings are present exactly once.
+  check that `LXD_CONTAINERS_PATH` and `BACKUP_ROOT` are present, along with
+  exactly one of `CONTAINER_NAME` or `CONTAINER_NAMES`.
 - **Container directory not found:** check that the configured parent path
-  and container name point to an existing directory.
+  and every configured workspace name point to an existing directory.
+- **Workspace list rejected:** provide unique, non-empty comma-separated
+  names in `CONTAINER_NAMES`. For backwards compatibility, one
+  `CONTAINER_NAME` is also accepted; do not configure both.
 - **`rsync` not found:** install it with the operating system package
   manager.
 - **Cannot write the log file:** `/var/log/backup.log` must be writable by
@@ -219,8 +232,9 @@ a command-line option.
   to the destination. Preserving owners, ACLs, and extended attributes can
   require elevated permissions; see [Installation](INSTALLATION.md).
 - **`rsync` returns an error:** its non-zero status is returned to the
-  terminal, and the timestamped destination may be incomplete. Inspect it
-  before deciding what to do with it.
+  batch, which continues with later workspaces. The command returns the first
+  non-zero status it encountered, and that workspace's destination may be
+  incomplete. Inspect it before deciding what to do with it.
 
 For a complete explanation of the Python functions and their relationships,
 see the [Python learning guide](PYTHON_LEARNING.md). For system setup and

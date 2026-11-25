@@ -78,19 +78,28 @@ nano config/backup.env
 The example settings are:
 
 ```dotenv
-CONTAINER_NAME=admin---demo-workspaces
+CONTAINER_NAMES=admin---demo-workspaces
 LXD_CONTAINERS_PATH=/var/snap/lxd/common/lxd/storage-pools/local/containers
 BACKUP_ROOT=/root/sundar/lxd-container-backup
 ```
 
-- `CONTAINER_NAME` is the name of the container directory to copy.
+- `CONTAINER_NAMES` is a comma-separated list of container/workspace
+  directory names. A single name is also valid.
 - `LXD_CONTAINERS_PATH` is the **parent** folder containing container
-  directories. The program adds `CONTAINER_NAME` to this path.
+  directories. The program adds each configured name to this path.
 - `BACKUP_ROOT` is the parent folder where backup folders are created.
 
 Use plain `KEY=VALUE` lines: do not add quotes or inline comments. Change the
-values to match the machine where the program will run. For example, the
-source directory for the shown settings is:
+values to match the machine where the program will run. To back up more than
+one workspace, separate the directory names with commas:
+
+```dotenv
+CONTAINER_NAMES=admin---demo-workspaces,admin---team-workspace
+```
+
+Spaces around names are ignored. The older `CONTAINER_NAME=name` setting is
+still supported for existing config files, but do not use both keys at once.
+For the example settings above, the first source directory is:
 
 ```text
 /var/snap/lxd/common/lxd/storage-pools/local/containers/admin---demo-workspaces
@@ -196,19 +205,22 @@ ends with a message like:
 Backup completed: /root/sundar/lxd-container-backup/admin---demo-workspaces/20261125_123000_123456
 ```
 
-Each run creates a new timestamped folder:
+Each configured workspace gets a new timestamped folder on each run:
 
 ```text
-BACKUP_ROOT/CONTAINER_NAME/YYYYMMDD_HHMMSS_microseconds/
+BACKUP_ROOT/WORKSPACE_NAME/YYYYMMDD_HHMMSS_microseconds/
 ```
 
-It does not overwrite an earlier timestamped backup. The folder contains the
-contents of the container directory, copied by `rsync`.
+The folder contains the contents of that workspace's container directory,
+copied by `rsync`. If one workspace fails, the command logs the failure and
+continues with the remaining workspaces. It returns a non-zero status if any
+workspace failed.
 
-If an error occurs, the command prints `Backup failed` and exits with status
-`2` for handled setup or configuration errors. If `rsync` itself fails, its
-non-zero status is returned and the destination may contain an incomplete
-copy. Inspect that folder before deciding what to do with it.
+If setup or configuration fails, the command prints `Backup failed` and exits
+with status `2`. If an individual workspace fails, the command reports it,
+continues with the remaining workspaces, and returns a non-zero status after
+the batch. A failed `rsync` may leave an incomplete destination; inspect it
+before deciding what to do with it.
 
 ## 7. Common issues
 
@@ -219,7 +231,10 @@ copy. Inspect that folder before deciding what to do with it.
   `config/backup.env` exists, or pass the correct config path after
   `--config`.
 - **Container directory not found:** check that `LXD_CONTAINERS_PATH` is the
-  parent directory and `CONTAINER_NAME` exactly matches a directory under it.
+  parent directory and each `CONTAINER_NAMES` entry exactly matches a
+  directory under it.
+- **Invalid workspace list:** use comma-separated, non-empty, unique names in
+  `CONTAINER_NAMES`, or use the legacy `CONTAINER_NAME` by itself.
 - **`rsync was not found`:** install rsync with the machine's package manager
   and check `rsync --version`.
 - **Cannot write `/var/log/backup.log`:** run with an account that can write
@@ -233,7 +248,7 @@ copy. Inspect that folder before deciding what to do with it.
 
 ## Limitations and data safety
 
-This tool copies the configured container directory only. It does not copy
+This tool copies the configured container directories only. It does not copy
 LXD configuration, snapshots, or storage-pool metadata, and may not be enough
 to restore a working LXD container.
 
@@ -252,4 +267,5 @@ other developer should create their own config, install Python and rsync,
 then follow this guide. See [Python learning guide](PYTHON_LEARNING.md) for
 the module walkthrough and [Git and version guide](GITHUB_AND_VERSIONING.md)
 for GitHub setup and releases. See [Command guide](COMMAND_GUIDE.md) for a
-step-by-step explanation of the installed command.
+step-by-step explanation of the installed command. See
+[Daily Linux backup](DAILY_BACKUP_LINUX.md) to schedule automatic runs.

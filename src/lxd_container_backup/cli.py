@@ -5,9 +5,9 @@ import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
-from .backup import backup_container
 from .config import DEFAULT_CONFIG_PATH, load_config
 from .logging_config import LOG_FILE, configure_logging
+from .workspace_backup import backup_workspaces
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -29,7 +29,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     logger.info("Backup command started with config %s", args.config)
     try:
-        return backup_container(load_config(args.config))
+        return backup_workspaces(load_config(args.config))
     except (OSError, ValueError) as error:
         logger.error("Backup failed: %s", error)
         print(f"Backup failed: {error}", file=sys.stderr)

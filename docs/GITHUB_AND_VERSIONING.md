@@ -266,7 +266,7 @@ the situation deliberately; do not use force-push commands as a shortcut.
 The package version currently lives in `setup.cfg` under `[metadata]`:
 
 ```ini
-version = 0.1.0
+version = 1.1.0
 ```
 
 Use the `MAJOR.MINOR.PATCH` pattern:
@@ -275,62 +275,119 @@ Use the `MAJOR.MINOR.PATCH` pattern:
 - **MINOR**: a backward-compatible feature.
 - **PATCH**: a backward-compatible fix.
 
-This project is currently `0.1.0`, before its first stable `1.0.0` release.
-The `0.x` stage signals that behavior and interfaces may still change; agree
-with collaborators on what compatibility they expect. Keep the package
-version in `setup.cfg` and the Git tag in sync. The tag convention adds `v`,
-for example package version `0.1.1` and Git tag `v0.1.1`.
+The multi-workspace release requested for this project is package version
+`1.1.0`, with Git tag `v1.1.0`. Keep the package version in `setup.cfg` and
+the Git tag in sync. The tag convention adds `v`; for example, package version
+`1.1.0` corresponds to Git tag `v1.1.0`.
 
-## 9. Release checklist
+The `1.1.0` release adds comma-separated `CONTAINER_NAMES`, preserves the
+legacy single-name `CONTAINER_NAME` setting, and continues the batch after an
+individual workspace failure.
 
-For a team, make the version change and release notes in a pull request, merge
-it to `main`, then tag the merged commit. For a solo project, make sure the
-version change is committed and pushed to `main` before tagging.
+## 9. Publish the multi-workspace release as `v1.1.0`
 
-1. Choose the next version and update `version` in `setup.cfg`. For a small
-   compatible bug fix, for example, change `0.1.0` to `0.1.1`.
-2. Review and commit the version and release-note changes. Build and check
-   the package from the project root:
+The package metadata is already set to `1.1.0` in `setup.cfg`. This is the
+package version; the GitHub tag adds a `v`, so the tag is `v1.1.0`. The tag
+must point to the commit containing the multiple-workspace code and updated
+documentation.
 
-   ```bash
-   python3 -m pip install -e .
-   lxd-container-backup --help
-   python3 -m pip wheel --no-deps . --wheel-dir dist
-   ```
+First make sure this checkout is a Git repository connected to your GitHub
+repository by following sections 4 and 5 above. From the project root, inspect
+your current branch and changes:
 
-   These commands assume Python 3.9 or newer. The editable install is for
-   local validation; `rsync` is an operating-system program, not a pip
-   dependency. This project does not currently have an automated test suite.
-   Do not use a real container backup as a routine code test.
-3. Confirm the change is on the latest `main` and the version tag is unused:
+```bash
+git status --short
+git diff
+```
 
-   ```bash
-   git switch main
-   git pull --ff-only origin main
-   git status --short
-   git tag --list
-   ```
+Build and check the package before publishing:
 
-4. Create an annotated tag on the release commit and push it:
+```bash
+python3 -m pip install -e .
+lxd-container-backup --help
+python3 -m pip wheel --no-deps . --wheel-dir dist
+```
 
-   ```bash
-   git tag -a v0.1.1 -m "Release v0.1.1"
-   git show --no-patch v0.1.1
-   git push origin v0.1.1
-   ```
+The help command does not start a backup. This project does not currently
+have an automated test suite; do not use a real container backup as a routine
+code test.
 
-   Replace `v0.1.1` with the version you chose. If the version-bump commit
-   has not yet been pushed by a pull request, push or merge it first. Never
-   move a published tag to another commit; make a new version instead.
-5. On GitHub, open **Releases**, choose **Draft a new release**, select the
-   pushed tag, and write release notes. If distributing the built wheel,
-   attach the `.whl` file from `dist/` to the release. Git ignores `dist/`
-   because it contains generated build output.
-6. Users installing from a release still need `rsync` and their own config:
+If this is the first time you are using Git in this project, follow sections
+4 and 5 instead: the initial commit and first push will already include the
+`1.1.0` package and its current code and documentation. Do not make a duplicate
+release commit; continue below after the initial push. If your working tree is
+already clean because these changes were committed earlier, skip the staging
+and commit commands and make sure the commit is pushed to `main`.
 
-   ```bash
-   lxd-container-backup --config /path/to/backup.env
-   ```
+For a solo project working directly on `main`, stage and inspect the
+release files:
+
+```bash
+git add setup.cfg README.md config/backup.env.example src/lxd_container_backup docs
+git status --short
+git diff --cached --check
+git diff --cached --stat
+git diff --cached
+```
+
+Confirm that the local `config/backup.env`, `.venv/`, generated backups, and
+credentials are not staged. Then commit and push the release contents:
+
+```bash
+git commit -m "Add multi-workspace backups for v1.1.0"
+git push origin main
+```
+
+If you work on a feature branch, push that branch and merge its pull request
+into `main` instead. After it is merged, update your local `main`:
+
+```bash
+git switch main
+git pull --ff-only origin main
+```
+
+Before creating a tag, check that `v1.1.0` does not already exist:
+
+```bash
+git tag --list v1.1.0
+```
+
+No output means the tag is unused. If the tag is already listed, stop; never
+move a published release tag to another commit. Create and push the annotated
+tag only after the release commit is on GitHub:
+
+```bash
+git tag -a v1.1.0 -m "Release v1.1.0"
+git show --no-patch --decorate v1.1.0
+git push origin v1.1.0
+```
+
+The branch push and tag push are separate: pushing `main` does not push the
+tag automatically. On GitHub, open **Releases**, choose **Draft a new
+release**, select `v1.1.0`, and publish release notes. Suggested notes:
+
+- Add comma-separated `CONTAINER_NAMES` for multiple workspaces.
+- Keep compatibility with the existing singular `CONTAINER_NAME` setting.
+- Continue backing up later workspaces if one workspace fails; return a
+  non-zero status if any backup fails.
+- Update installation, command, Python learning, and daily Linux scheduling
+  documentation.
+
+Attach the `.whl` file from `dist/` to the GitHub Release if you want to
+distribute the built package. The package still requires `rsync` and a
+user-provided config file, for example:
+
+```bash
+lxd-container-backup --config /path/to/backup.env
+```
+
+## 10. Checklist for later releases
+
+For a future release, update `version` in `setup.cfg`, prepare release notes,
+run the package checks above, merge the release commit to `main`, and use a
+new annotated tag that matches the version (for example, package version
+`1.1.1` uses tag `v1.1.1`). Push the branch and tag, then create the matching
+GitHub Release. Never reuse a published version tag.
 
 ## Common problems
 
