@@ -389,6 +389,79 @@ new annotated tag that matches the version (for example, package version
 `1.1.1` uses tag `v1.1.1`). Push the branch and tag, then create the matching
 GitHub Release. Never reuse a published version tag.
 
+## 11. Find or check out an older version
+
+Branches and tags have different jobs:
+
+- `main` is a moving branch. New commits are added to it over time.
+- A version tag such as `v1.1.0` marks one exact commit. Do not move or reuse
+  a published version tag.
+
+For example, after publishing this release, the project's history could
+continue like this:
+
+| Change | Package version | Git tag |
+| --- | --- | --- |
+| Multiple-workspace release | `1.1.0` | `v1.1.0` |
+| Compatible bug fix | `1.1.1` | `v1.1.1` |
+| New compatible feature | `1.2.0` | `v1.2.0` |
+| Incompatible change | `2.0.0` | `v2.0.0` |
+
+Each later tag points to its own release commit; adding commits to `main` does
+not change the code saved by older tags. List and inspect tags with:
+
+```bash
+git tag --list --sort=-version:refname
+git show --no-patch --decorate v1.1.0
+```
+
+### Download one version into a separate folder
+
+After the tag has been pushed to GitHub, clone that exact version into a new
+directory. Replace the repository URL with your own:
+
+```bash
+git clone --branch v1.1.0 --single-branch https://github.com/USERNAME/REPOSITORY.git backup-v1.1.0
+cd backup-v1.1.0
+git status
+```
+
+When cloning a tag, Git checks out that release in a detached-HEAD state. This
+is suitable for inspecting or running the old version; do not make commits
+there. The tag must already exist on GitHub. For an older release, replace
+`v1.1.0` and the folder name with the tag you want, such as `v1.0.0`.
+
+The local `config/backup.env` and backup data are not included in Git. To run
+an older checkout, create its config from `config/backup.env.example`, review
+the paths, and install/run it using that release's instructions.
+
+### Check out a tag in an existing clone
+
+Fetch the tags, then check out a specific version:
+
+```bash
+git fetch origin --tags
+git switch --detach v1.1.0
+```
+
+To return to the moving `main` branch after inspecting the tag:
+
+```bash
+git switch main
+git pull --ff-only origin main
+```
+
+If you need to make a fix based on an older release, create a branch from the
+tag instead of committing while detached:
+
+```bash
+git switch -c fix/1.1.x v1.1.0
+```
+
+After testing that fix, update the package patch version (for example,
+`1.1.0` to `1.1.1`) and create a new tag `v1.1.1`. Do not replace the old
+`v1.1.0` tag.
+
 ## Common problems
 
 - **`git` is not found:** install Git for your operating system, reopen the
