@@ -86,6 +86,18 @@ if another hour is more suitable. `Persistent=true` asks systemd to run a
 missed timer once after the machine starts again; it does not replay every
 missed day.
 
+### What if yesterday's backup is still running?
+
+Because this is a `Type=oneshot` systemd service, systemd will not start a
+second instance of this same service while the first one is still active. A
+timer event that occurs while the service is active is skipped; it is not
+queued to start immediately when the backup finishes. The next attempt is at
+the next scheduled time. `Persistent=true` handles a timer missed while the
+machine was off; it is not a retry policy for an already-running backup.
+See the
+[systemd timer documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd.timer.html)
+for the service activation behavior.
+
 Create the timer file:
 
 ```bash
@@ -173,16 +185,23 @@ sudo crontab -e
 ```
 
 Add one line to run every day at 02:00. Replace the paths if your checkout is
-elsewhere:
+elsewhere. Use `flock -n` so cron skips this occurrence if the previous
+backup command is still running:
 
 ```cron
-0 2 * * * /root/sundar/lxd-container-backup/backup-code/.venv/bin/lxd-container-backup --config /root/sundar/lxd-container-backup/backup-code/config/backup.env >> /var/log/backup-cron-output.log 2>&1
+0 2 * * * /usr/bin/flock -n /run/lock/lxd-container-backup.lock /root/sundar/lxd-container-backup/backup-code/.venv/bin/lxd-container-backup --config /root/sundar/lxd-container-backup/backup-code/config/backup.env >> /var/log/backup-cron-output.log 2>&1
 ```
 
 The application still writes its summary to `/var/log/backup.log`. The cron
 redirection stores command output, including rsync progress, separately in
 `/var/log/backup-cron-output.log`. Root's crontab can write these files; set
-up log rotation for them if you keep the job enabled.
+up log rotation for them if you keep the job enabled. `flock -n` does not wait
+for an active backup and does not queue a retry; the next attempt is at the
+next cron time. The lock is released automatically when the command exits.
+Check that `flock` is installed with `command -v flock`; it is usually
+provided by the Linux `util-linux` package. See the
+[flock manual](https://man7.org/linux/man-pages/man1/flock.1.html) for its
+nonblocking option.
 
 List root's scheduled jobs with:
 
@@ -199,6 +218,9 @@ unless you intentionally want it to run twice per day.
 - Each scheduled run copies every configured workspace into a new timestamped
   folder. This is not an incremental or deduplicated backup, so storage use
   can grow quickly.
+- The systemd service or cron `flock` example prevents overlapping runs from
+  that scheduler. The backup program itself does not have a global process
+  lock, so do not start a manual CLI run while a scheduled backup is active.
 - The tool does not delete old backups. Do not add a cleanup command until
   you have decided how many copies to retain and have tested the deletion
   rules against a temporary directory.
