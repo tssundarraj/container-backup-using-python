@@ -7,6 +7,7 @@ from typing import Optional, Sequence
 
 from .backup import backup_container
 from .config import DEFAULT_CONFIG_PATH, load_config
+from .logging_config import LOG_FILE, configure_logging
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -21,7 +22,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        logger = configure_logging()
+    except OSError as error:
+        print(f"Backup failed: cannot write log file {LOG_FILE}: {error}", file=sys.stderr)
+        return 2
+
+    logger.info("Backup command started with config %s", args.config)
+    try:
         return backup_container(load_config(args.config))
     except (OSError, ValueError) as error:
+        logger.error("Backup failed: %s", error)
         print(f"Backup failed: {error}", file=sys.stderr)
         return 2

@@ -1,5 +1,6 @@
 """Copy LXD container directories using rsync."""
 
+import logging
 import os
 import re
 import shutil
@@ -8,6 +9,8 @@ import sys
 from datetime import datetime
 
 from .config import BackupConfig
+
+logger = logging.getLogger(__name__)
 
 
 def backup_container(config: BackupConfig) -> int:
@@ -40,14 +43,21 @@ def backup_container(config: BackupConfig) -> int:
         f"{source_path}{os.sep}",
         f"{destination_path}{os.sep}",
     ]
+    logger.info("Starting backup: %s -> %s", source_path, destination_path)
     print(f"Copying {source_path} to {destination_path}")
     result = subprocess.run(command, check=False)
     if result.returncode != 0:
+        logger.error(
+            "rsync failed with exit code %s; destination may be incomplete: %s",
+            result.returncode,
+            destination_path,
+        )
         print(
             f"rsync failed with exit code {result.returncode}; "
             f"the destination may be incomplete: {destination_path}",
             file=sys.stderr,
         )
         return result.returncode
+    logger.info("Backup completed: %s", destination_path)
     print(f"Backup completed: {destination_path}")
     return 0

@@ -1,148 +1,248 @@
 # Python package: beginner and developer guide
 
-This guide explains how the backup package is organized, how to follow its
-code, how it was put together, and how to add another module. It assumes basic
-Python familiarity, but explains the package-specific ideas as they appear.
+This guide follows the files and code currently in this project. It explains
+how the command reaches the backup function, what each module does, how
+settings are read, and how to extend the package without mixing unrelated
+responsibilities.
 
-## 1. Prepare a development environment
+For prerequisites and commands to make an actual backup, first follow
+[Installation and running the backup](INSTALLATION.md). The examples here
+that only load config or print help do not copy container files.
 
-From the project directory, create the local config if needed:
-
-```bash
-if [ ! -f config/backup.env ]; then
-    cp config/backup.env.example config/backup.env
-fi
-```
-
-An isolated environment is optional, but recommended when developing:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e .
-```
-
-The `-e` option installs the project in editable mode: Python imports the code
-from `src/`, so changes are available without reinstalling. The package has
-no third-party runtime dependencies. Install `rsync` separately with your
-operating system.
-
-For a beginner-friendly first check, display the command help without starting
-a backup:
-
-```bash
-lxd-container-backup --help
-```
-
-## 2. Understand the project layout
+## 1. Project files
 
 ```text
-config/
-  backup.env.example      Safe-to-share config template
-  backup.env              Local settings; ignored by Git
-src/lxd_container_backup/
-  config.py               Read settings and create BackupConfig
-  backup.py               Perform one reusable rsync copy
-  cli.py                  Parse command-line options and handle errors
-  __main__.py             Support python -m lxd_container_backup
-  __init__.py             Define the package's public API
-docs/
-  INSTALLATION.md         Setup, running, and sharing instructions
-  PYTHON_LEARNING.md      This guide
-pyproject.toml            Select the build system
-setup.cfg                 Package name, version, Python floor, CLI command
-setup.py                  Small setuptools build entry point
-requirements.txt          Notes about Python and the system rsync dependency
+.
+├── .gitignore
+├── README.md
+├── requirements.txt
+├── pyproject.toml
+├── setup.cfg
+├── setup.py
+├── config/
+│   ├── backup.env.example
+│   └── backup.env                 Local config; ignored by Git
+├── docs/
+│   ├── INSTALLATION.md
+│   ├── PYTHON_LEARNING.md
+│   ├── COMMAND_GUIDE.md
+│   └── GITHUB_AND_VERSIONING.md
+└── src/
+    └── lxd_container_backup/
+        ├── __init__.py
+        ├── __main__.py
+        ├── backup.py
+        ├── cli.py
+        ├── config.py
+        └── logging_config.py
 ```
 
-There are two different names to notice:
+The local `config/backup.env` is created from the example and is not meant to
+be committed. The example is safe to share because it contains defaults, not
+machine secrets. A `.venv/` directory, if created, contains a local Python
+environment and is also ignored.
 
-- `lxd_container_backup` uses underscores because it is a Python package name.
-- `lxd-container-backup` uses hyphens because it is a shell command name.
+There are two similar-looking but different names:
 
-The `src/` layout keeps importable Python code separate from project
-configuration, docs, and packaging files.
+- `lxd_container_backup` is the Python import/package name; Python package
+  names use underscores here.
+- `lxd-container-backup` is the installed terminal command; the command name
+  is declared in `setup.cfg`.
 
-## 3. Follow the call flow
+The `src/` layout keeps importable package code separate from configuration,
+documentation, and build metadata.
 
-When a user runs:
+## 2. How the command flows through the modules
+
+After installing the project in an active virtual environment, a user can
+run:
 
 ```bash
 lxd-container-backup --config config/backup.env
 ```
 
-the modules work together in this order:
+The relevant `setup.cfg` entry maps that command to the `main` function:
+
+```ini
+[options.entry_points]
+console_scripts =
+    lxd-container-backup = lxd_container_backup.cli:main
+```
+
+The call flow is:
 
 ```text
 shell command
-  └── setup.cfg console entry point -> cli.main()
-        ├── argparse reads --config
-        ├── config.load_config(path) -> BackupConfig
-        └── backup.backup_container(config) -> exit status
-              └── subprocess.run(command) -> rsync process
+  └── setup.cfg console entry point
+       └── cli.main()
+            ├── logging_config.configure_logging() -> /var/log/backup.log
+            ├── argparse reads --config
+            ├── config.load_config(path) -> BackupConfig
+            └── backup.backup_container(config) -> exit status
+                  └── subprocess.run(argument_list) -> rsync
 ```
 
-The same `main()` function is used by
-`python -m lxd_container_backup`: Python loads `__main__.py`, which calls
-`cli.main()`. Importing `lxd_container_backup` does not start a copy.
+The same CLI can be started without the installed terminal command:
 
-## 4. Learn what each module owns
+```bash
+PYTHONPATH=src python3 -m lxd_container_backup --config config/backup.env
+```
 
-### `config.py`: settings and data
+Python first loads `__main__.py`, which calls `cli.main()`. Importing
+`lxd_container_backup` by itself does not start a copy.
 
-`BackupConfig` is a frozen dataclass. A dataclass groups related values into
-one object; `frozen=True` prevents accidentally changing those settings after
-they have been loaded.
+## 3. `config.py`: parse settings into a data object
 
-Its fields are:
+This module imports `dataclass` and `Path` from Python's standard library.
+`REQUIRED_SETTINGS` lists the only accepted config keys:
 
 ```python
-BackupConfig(
-    container_name="admin---demo-workspaces",
-    containers_path=Path("/var/snap/lxd/common/lxd/storage-pools/local/containers"),
-    backup_root=Path("/root/sundar/lxd-container-backup"),
-)
+REQUIRED_SETTINGS = {"CONTAINER_NAME", "LXD_CONTAINERS_PATH", "BACKUP_ROOT"}
 ```
 
-`load_config(path)` reads the simple `KEY=VALUE` file, skips comments and
-blank lines, rejects invalid, unknown, or duplicate settings, and returns a
-`BackupConfig`. It does not run rsync.
+`DEFAULT_CONFIG_PATH` calculates the source-checkout default path to
+`config/backup.env`. When the package is installed as a wheel, that local
+project config may not be beside the installed Python package. For that
+reason, pass `--config /path/to/backup.env` explicitly when using an installed
+package.
 
-### `backup.py`: reusable operation
-
-`backup_container(config)` accepts a `BackupConfig`, validates the container
-and paths, makes a timestamped destination, then starts rsync. It returns `0`
-for success or rsync's non-zero exit status. Invalid settings or inaccessible
-paths raise an exception for the caller to handle.
-
-The rsync arguments are passed as a Python list, not as a shell command
-string. This makes argument boundaries clear and avoids shell interpretation.
-The flags preserve common file metadata, hard links, ACLs, extended
-attributes, and numeric user/group IDs.
-
-### `cli.py`: command-line interface
-
-`argparse` defines the `--config` option and automatically provides `--help`.
-The CLI loads settings, calls the reusable backup function, and turns handled
-errors into a clear message and non-zero process status.
-
-### `__init__.py` and `__main__.py`: package entry points
-
-`__init__.py` re-exports `BackupConfig`, `load_config`, and
-`backup_container`, so another Python project can import them directly:
+The settings object is:
 
 ```python
-from lxd_container_backup import BackupConfig, backup_container
+@dataclass(frozen=True)
+class BackupConfig:
+    container_name: str
+    containers_path: Path
+    backup_root: Path
 ```
 
-`__main__.py` allows the package to be run with `python -m
-lxd_container_backup`. The installed shell command is declared in `setup.cfg`.
+`@dataclass` creates a class for storing related values. `frozen=True` makes
+its fields read-only after construction. The configuration loader returns one
+`BackupConfig`; the backup function receives that object instead of three
+separate arguments.
 
-## 5. Read config without making a backup
+`load_config(config_path)` processes the file one line at a time:
 
-This example imports the config module and displays its values. It does not
-call `backup_container()` and does not start rsync. Run it from the project
-directory:
+1. `read_text(encoding="utf-8").splitlines()` reads text and splits it into
+   lines.
+2. `enumerate(..., start=1)` records human-readable line numbers for errors.
+3. Stripping whitespace lets blank lines and lines beginning with `#` be
+   skipped.
+4. `partition("=")` splits a setting at its first equals sign.
+5. The loader rejects lines without `=`, empty values, unrecognized keys,
+   duplicate keys, and missing required keys.
+6. It creates `Path` objects for the two path settings and expands a leading
+   `~` with `expanduser()`.
+7. It returns a `BackupConfig`.
+
+This is a simple `KEY=VALUE` format, not a full shell script or dotenv
+interpreter. Do not quote values or add inline comments. For example:
+
+```dotenv
+CONTAINER_NAME=admin---demo-workspaces
+LXD_CONTAINERS_PATH=/var/snap/lxd/common/lxd/storage-pools/local/containers
+BACKUP_ROOT=/root/sundar/lxd-container-backup
+```
+
+Loading settings validates their format and required keys, but does not check
+that the container directory exists. That filesystem check happens in
+`backup.py`.
+
+## 4. `backup.py`: validate paths and run rsync
+
+`backup_container(config)` takes a `BackupConfig` and returns an integer exit
+status. Its main steps are:
+
+1. **Validate the container name.** A regular expression allows ASCII letters,
+   numbers, dots, underscores, and hyphens, and requires the first character
+   to be a letter or number. Invalid names raise `ValueError`.
+2. **Build and check the source path.** The source is
+   `config.containers_path / config.container_name`. It must be an existing
+   directory or `FileNotFoundError` is raised.
+3. **Find rsync.** `shutil.which("rsync")` searches the executable path. If it
+   is missing, the function raises `FileNotFoundError`.
+4. **Protect the source from destination overlap.** The function rejects a
+   backup directory equal to, or inside, the source container directory.
+5. **Create a unique destination.** A timestamp is formatted as
+   `YYYYMMDD_HHMMSS_microseconds` and a directory is created under
+   `BACKUP_ROOT/CONTAINER_NAME/`.
+6. **Run rsync.** `subprocess.run()` receives a list of arguments, not a
+   shell-command string. It uses `check=False` so the code can inspect rsync's
+   exit status itself.
+
+The rsync options are:
+
+- `-a`: archive mode, preserving common file attributes and directory
+  structure.
+- `-H`: preserve hard links.
+- `-A`: preserve ACLs.
+- `-X`: preserve extended attributes.
+- `--numeric-ids`: preserve numeric user and group IDs rather than mapping
+  names.
+- `--human-readable` and `--info=progress2`: make progress information easier
+  to read.
+- `--`: marks the end of options, so paths are treated as paths.
+- A trailing slash on the source means copy the contents of the container
+  directory into the timestamped destination.
+
+The function prints progress messages. On rsync success it returns `0`; on
+rsync failure it prints a warning that the destination may be incomplete and
+returns rsync's non-zero status. An error before starting rsync is raised for
+the CLI to report. It also writes start, success, or rsync-failure messages
+to the package logger.
+
+## 5. `cli.py`: connect settings and backup operation
+
+`argparse` creates the command-line interface and automatically implements
+`--help`. The `--config` option accepts a path and has
+`DEFAULT_CONFIG_PATH` as its default.
+
+`main(argv=None)` can parse the real command-line arguments or a supplied
+sequence, which is useful when another Python function calls it. It initializes
+logging, loads config, and calls `backup_container()`. `OSError` and
+`ValueError` exceptions are printed to standard error as `Backup failed: ...`;
+these handled errors return status `2`. Otherwise, the CLI returns the backup
+function's status. The command runner uses that return value as the process
+exit status.
+
+The CLI parses arguments before it configures logging, so `--help` displays
+usage and exits without creating the log file. If logging cannot be
+initialized, the CLI prints the error and returns `2` without starting a
+backup.
+
+### `logging_config.py`: create the application log
+
+This module uses Python's built-in `logging` package. `LOG_FILE` is
+`/var/log/backup.log`. `configure_logging(log_file=LOG_FILE)` resolves the
+path, creates its parent directory if needed, and configures the
+`lxd_container_backup` logger at `INFO` level. It adds a UTF-8 `FileHandler`
+only if a handler for that path is not already attached. The handler appends
+timestamped messages instead of replacing existing log entries.
+
+The CLI calls this function before loading the config, so config and backup
+errors can be logged. The default `/var/log` location usually requires
+elevated permission. If the file cannot be opened, the program reports the
+error and does not proceed without logging. The file is not automatically
+rotated; configure system log rotation if the command will run regularly.
+
+## 6. `__init__.py` and `__main__.py`: public imports and launchers
+
+`__init__.py` defines the package's public API by re-exporting
+`BackupConfig`, `load_config`, and `backup_container`. Another Python program
+can import them from the package:
+
+```python
+from lxd_container_backup import BackupConfig, backup_container, load_config
+```
+
+`__main__.py` imports `main` from `cli.py` and raises `SystemExit(main())`.
+This is what makes `python -m lxd_container_backup` run the CLI and return its
+exit status to the operating system.
+
+## 7. Read settings without starting a backup
+
+This example loads the config and prints its values; it does not call rsync.
+Run it from the project root after creating `config/backup.env`:
 
 ```bash
 PYTHONPATH=src python3 - <<'PY'
@@ -157,107 +257,93 @@ print(config.backup_root)
 PY
 ```
 
-`PYTHONPATH=src` tells Python to search the `src/` folder for the package.
-The import path
-`lxd_container_backup.config` means “the `config` module inside the
-`lxd_container_backup` package.” `load_config(...)` calls that module's
-function; the returned object's fields are accessed with dot notation, such
-as `config.container_name`.
+`PYTHONPATH=src` adds `src/` to Python's import search path. The dotted import
+`lxd_container_backup.config` means the `config` module inside the
+`lxd_container_backup` package. `load_config(...)` returns an object, and dot
+notation such as `config.container_name` reads one of its fields.
 
-## 6. Build a similar package from scratch
+## 8. Packaging and project support files
 
-When starting a small Python tool, build it in layers:
+- **`setup.cfg`** contains the package name, current version (`0.1.0`),
+  minimum Python version (`>=3.9`), package discovery settings, and the
+  `lxd-container-backup` console command.
+- **`pyproject.toml`** tells build tools to use the setuptools build backend.
+- **`setup.py`** calls `setuptools.setup()` so setuptools reads metadata from
+  `setup.cfg`.
+- **`requirements.txt`** documents Python and system requirements. It is not
+  an installable list of pip packages because there are no third-party
+  runtime Python dependencies.
+- **`.gitignore`** excludes the virtual environment, Python cache files,
+  local config, and generated build output from Git.
+- **`config/backup.env.example`** provides shareable default settings.
+- **`README.md`** is the project overview and quick start.
+- **`docs/INSTALLATION.md`** explains setup and running the program.
+- **`docs/COMMAND_GUIDE.md`** explains the installed command and its call flow.
+- **`docs/GITHUB_AND_VERSIONING.md`** explains Git, GitHub, and releases.
+- **`src/lxd_container_backup/logging_config.py`** configures the application
+  log file.
 
-1. **Write down the inputs and outputs.** This program needs a container name,
-   a source parent directory, and a backup root; it produces a timestamped
-   copy and an exit status.
-2. **Choose module responsibilities.** Put config parsing in `config.py`,
-   file-copy logic in `backup.py`, and command-line handling in `cli.py`.
-3. **Define the data passed between modules.** `BackupConfig` carries the
-   container name and paths from the config parser to the backup function.
-4. **Implement and check the core operation.** Validate paths before building
-   the rsync command. Pass command arguments as a list and return the process
-   status.
-5. **Add the CLI last.** The CLI should connect inputs and outputs, not contain
-   the file-copy implementation itself.
-6. **Add packaging metadata and docs.** `setup.cfg` names the project and
-   declares the command; `pyproject.toml` selects the build backend.
+## 9. How to add another module
 
-This order keeps the reusable function independent of the command line.
-Another program can call the function with a `BackupConfig`, while a human
-can use the shell command.
+Add a module when it has a clear responsibility. Keep the current division:
+config parsing belongs in `config.py`, copying belongs in `backup.py`, and
+command-line handling belongs in `cli.py`. A module should not import the CLI
+just to access a helper; keep dependencies flowing in one direction where
+possible to avoid circular imports.
 
-## 7. Add a new module
+For example, if the program later gains a separate validation responsibility,
+you could create `src/lxd_container_backup/validation.py`, move the existing
+container-name rule there, and import that function in `backup.py`. The
+current implementation performs this check directly in `backup.py`; do not
+add a second copy of the rule. Export a helper from `__init__.py` only if you
+intend it to be part of the package's supported public API.
 
-Create a new module when you have a distinct responsibility, not just to move
-one line of code. For example, container-name validation could later be
-separated from the rsync operation.
+When adding or changing behavior:
 
-1. Create `src/lxd_container_backup/validation.py`.
-2. Put the validation function there:
+1. Decide which module owns the behavior.
+2. Pass data between modules using explicit arguments and return values.
+3. Update callers and documentation that depend on the behavior.
+4. Check `lxd-container-backup --help` and use a temporary source plus a mock
+   for rsync-related checks; do not test against a real container by
+   accident.
 
-   ```python
-   import re
+## 10. Build and share the package
 
-
-   def validate_container_name(name: str) -> None:
-       if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
-           raise ValueError("invalid container name")
-   ```
-
-3. In `backup.py`, import and call that function:
-
-   ```python
-   from .validation import validate_container_name
-
-   # Inside backup_container():
-   validate_container_name(config.container_name)
-   ```
-
-4. Remove the old validation code and its `re` import from `backup.py`; do not
-   keep two copies of the same rule.
-5. Export the function from `__init__.py` only if you intend it to be part of
-   the public API. Internal helpers can stay in their own module.
-6. Update this guide or other docs if the new module changes how a developer
-   uses the package.
-
-The leading dot in `from .validation import ...` is a **relative import**: it
-means “import from this same package.” Keep dependencies flowing one way
-where practical. For example, `cli.py` may import `config.py` and `backup.py`;
-`config.py` should not import `cli.py`. Avoid circular imports where two
-modules import each other.
-
-## 8. Package and share changes
-
-For development, install the checkout in editable mode:
+For local development, create and activate a virtual environment as described
+in [Installation](INSTALLATION.md), then install the project:
 
 ```bash
 python -m pip install -e .
 ```
 
-To build a wheel for another Python user:
+To build a wheel:
 
 ```bash
-python -m pip wheel --no-deps . --wheel-dir dist
+python3 -m pip wheel --no-deps . --wheel-dir dist
 ```
 
-Share the wheel or the source project. A source project is best when the
-recipient will edit modules. Include `src/`, `config/backup.env.example`,
-`setup.cfg`, `setup.py`, `pyproject.toml`, `requirements.txt`, and `docs/`.
-Do not share your local `config/backup.env` unless its machine-specific paths
-are intended for the recipient. The recipient must install rsync separately
-and provide a config path when running an installed package:
+The generated `.whl` file is written in `dist/`. Share that wheel for
+installation, or share the source files when another developer needs to edit
+the code. Do not include `.venv/`, generated backups, or local
+`config/backup.env`.
+
+An installed package should be run with an explicit config path:
 
 ```bash
 lxd-container-backup --config /path/to/backup.env
 ```
 
-## 9. Safe development checks
+The package does not include your machine's config file. The recipient must
+install `rsync`, create their own config from `config/backup.env.example`,
+and provide that config path.
 
-- Run `lxd-container-backup --help` to check CLI setup without starting a copy.
-- Use the config-reading example above to check parsing without invoking
-  rsync.
-- When changing copy behavior, use a temporary source directory and mock
-  `subprocess.run()` so development checks cannot copy the real container.
-- Do not treat a successful filesystem copy as proof that a live container is
-  application-consistent or fully restorable.
+## 11. Safe checks and limits
+
+- `lxd-container-backup --help` checks that the command is available without
+  starting a copy.
+- The config-reading example checks parsing without starting rsync.
+- This project currently has no automated test suite.
+- A successful directory copy does not include LXD configuration,
+  snapshots, or storage-pool metadata.
+- A running container can change during the copy; application-aware backup
+  steps may be required for consistent databases or other stateful services.
